@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.npy.part
+
+# データ・出力（大きいので git に入れない）
+raw_data/
+input_folder/
+output_npy/
+dark/
+*.RAW
+*.raw
+*.npy
+calibration.json
+names.txt
