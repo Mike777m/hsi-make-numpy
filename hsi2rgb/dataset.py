@@ -22,6 +22,11 @@ Iromiel Hyper の出力フォルダはこうなっている。
     <dataset>/<RAW名>/camera/compressed_<RAW名>.png   （残す設定のときだけ）
 
 discover_scenes はどちらの形式かを自動で見分ける（detect_layout）。
+
+Box Drive 上では、フォルダの中身をクラウドから取れずに一時的なエラー（1237）になることがある。
+ここでのファイル確認は fs_retry.retry_io でやり直し、それでも読めない再構成フォルダは
+Scene.unreadable に理由を入れて返す（使う側はその Scene を飛ばし、次の実行に回す）。
+フォルダ一覧そのものが読めないときは TransientIOError を出す。
 """
 
 import json
@@ -30,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .fileio import load_compressed_measurement, load_raw_measurement
+from .fs_retry import TransientIOError, retry_io
 
 
 @dataclass
@@ -41,17 +47,23 @@ class Scene:
     output_stem: str            # 出力ファイル名（元のRAW名。無ければ <TS>）
     raw_path: Path | None       # 対応する RAW（並び順で推定。RAW名フォルダ形式では名前で確実）
     compressed_path: Path | None  # camera/compressed_<TS>.png（<TS>一致で確実）
+    unreadable: str | None = None  # 一時的なエラーで確認できなかった理由。None なら正常
 
     def __str__(self):
         return f"{self.timestamp} -> {self.output_stem}"
 
 
+def _list_dir(root):
+    """root の中身を一覧する（一時的なエラーはやり直す）。"""
+    return retry_io(lambda: list(Path(root).iterdir()))
+
+
 def list_reconstruct_folders(reconstruct_root):
     """reconstruct 直下の各再構成フォルダを名前順（= 撮影順）で返す。"""
     root = Path(reconstruct_root)
-    if not root.is_dir():
+    if not retry_io(root.is_dir):
         raise FileNotFoundError(f"reconstructフォルダが見つかりません: {root}")
-    folders = sorted(p for p in root.iterdir() if p.is_dir())
+    folders = sorted(p for p in _list_dir(root) if retry_io(p.is_dir))
     if not folders:
         raise FileNotFoundError(f"再構成フォルダが空です: {root}")
     return folders
@@ -60,27 +72,40 @@ def list_reconstruct_folders(reconstruct_root):
 def list_raw_files(raw_root):
     """raw_data 内の RAW ファイルを名前順で返す。フォルダが無ければ空リスト。"""
     root = Path(raw_root)
-    if not root.is_dir():
+    if not retry_io(root.is_dir):
         return []
     return sorted(
-        (p for p in root.iterdir() if p.is_file() and p.suffix.lower() == ".raw"),
+        (p for p in _list_dir(root) if p.suffix.lower() == ".raw" and retry_io(p.is_file)),
         key=lambda p: p.name,
     )
 
 
 def detect_layout(dataset_dir):
-    """入力フォルダの形式。"iromiel" / "raw_named" / None（どちらでもない）"""
+    """入力フォルダの形式。"iromiel" / "raw_named" / None（どちらでもない）
+
+    RAW名フォルダが1つも確認できず、確認できなかったフォルダがあるときは TransientIOError を出す
+    （「どちらでもない」と取り違えて、再構成をやり直してしまわないように）。
+    """
     root = Path(dataset_dir)
-    if (root / "reconstruct").is_dir():
+    if retry_io((root / "reconstruct").is_dir):
         return "iromiel"
-    if root.is_dir() and any(_raw_named_band_dir(p) for p in root.iterdir()):
-        return "raw_named"
+    if not retry_io(root.is_dir):
+        return None
+    error = None
+    for p in _list_dir(root):
+        try:
+            if _raw_named_band_dir(p):
+                return "raw_named"
+        except TransientIOError as e:
+            error = e
+    if error is not None:
+        raise error
     return None
 
 
 def _raw_named_band_dir(folder):
     band_dir = folder / "reconstruct" / folder.name
-    return band_dir if band_dir.is_dir() else None
+    return band_dir if retry_io(band_dir.is_dir) else None
 
 
 def discover_raw_named_scenes(dataset_dir, raw_dir, verbose=True):
@@ -89,19 +114,36 @@ def discover_raw_named_scenes(dataset_dir, raw_dir, verbose=True):
     raw_by_stem = {p.stem: p for p in list_raw_files(raw_dir)} if raw_dir else {}
 
     scenes = []
-    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
-        band_dir = _raw_named_band_dir(folder)
-        if band_dir is None:
-            continue
+    for folder in sorted(_list_dir(root)):
         name = folder.name
-        compressed = folder / "camera" / f"compressed_{name}.png"
+        try:
+            if not retry_io(folder.is_dir):
+                continue
+            band_dir = _raw_named_band_dir(folder)
+            if band_dir is None:
+                continue
+            compressed = folder / "camera" / f"compressed_{name}.png"
+            compressed_path = compressed if retry_io(compressed.is_file) else None
+        except TransientIOError as e:
+            # 読めないフォルダは飛ばす印をつけて返す（「再構成結果が無い」と取り違えないように）
+            scenes.append(
+                Scene(
+                    reconstruct_dir=folder / "reconstruct" / name,
+                    timestamp=name,
+                    output_stem=name,
+                    raw_path=raw_by_stem.get(name),
+                    compressed_path=None,
+                    unreadable=str(e),
+                )
+            )
+            continue
         scenes.append(
             Scene(
                 reconstruct_dir=band_dir,
                 timestamp=name,
                 output_stem=name,
                 raw_path=raw_by_stem.get(name),
-                compressed_path=compressed if compressed.is_file() else None,
+                compressed_path=compressed_path,
             )
         )
     if not scenes:
@@ -112,6 +154,9 @@ def discover_raw_named_scenes(dataset_dir, raw_dir, verbose=True):
         no_raw = [s.output_stem for s in scenes if s.raw_path is None]
         if raw_dir and no_raw:
             print(f"  警告: 同じ名前の RAW が {raw_dir} にありません: {', '.join(no_raw)}")
+        unreadable = [s.output_stem for s in scenes if s.unreadable]
+        if unreadable:
+            print(f"  警告: 一時的なエラーで読めないフォルダ（飛ばします）: {', '.join(unreadable)}")
     return scenes
 
 
@@ -147,13 +192,18 @@ def discover_scenes(dataset_dir, raw_dir, verbose=True):
     for i, folder in enumerate(folders):
         raw_path = raw_files[i] if i < len(raw_files) else None
         compressed = camera_root / f"compressed_{folder.name}.png"
+        try:
+            compressed_path, unreadable = (compressed if retry_io(compressed.is_file) else None), None
+        except TransientIOError as e:
+            compressed_path, unreadable = None, str(e)
         scenes.append(
             Scene(
                 reconstruct_dir=folder,
                 timestamp=folder.name,
                 output_stem=raw_path.stem if raw_path else folder.name,
                 raw_path=raw_path,
-                compressed_path=compressed if compressed.is_file() else None,
+                compressed_path=compressed_path,
+                unreadable=unreadable,
             )
         )
 

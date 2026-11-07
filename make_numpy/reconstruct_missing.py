@@ -3,6 +3,7 @@ import sys
 from types import SimpleNamespace
 
 from hsi2rgb import dataset
+from hsi2rgb.fs_retry import TransientIOError
 
 import settings
 
@@ -14,10 +15,15 @@ def reconstruct_missing(missing, calibration):
     """
     jobs = []
     for folder, names in missing.items():
-        if dataset.detect_layout(folder.input_dir) == "iromiel":
+        try:
+            layout = dataset.detect_layout(folder.input_dir)
+            raws = {p.stem: p for p in dataset.list_raw_files(folder.raw_dir)}
+        except TransientIOError as e:  # 形式を確かめられないまま再構成しない（次の実行に回す）
+            print(f"  再構成しません: {folder.name}（一時的なエラーで読めません: {e}）")
+            continue
+        if layout == "iromiel":
             print(f"  再構成しません: {folder.name}（{folder.input_dir} は Iromiel Hyper 形式）")
             continue
-        raws = {p.stem: p for p in dataset.list_raw_files(folder.raw_dir)}
         todo = []
         for name in names:
             if settings.WHITE_CORRECTION and name not in calibration:

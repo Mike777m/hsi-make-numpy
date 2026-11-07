@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hsi2rgb import dataset
+from hsi2rgb.fs_retry import retry_io
 
 import settings
 
@@ -14,7 +15,7 @@ class Folder:
 
 
 def find_raw(names):
-    """RAW 名ごとに、どの日付・時間フォルダにあるかを探す。
+    """RAW 名ごとに、どの日付・時間フォルダにあるかを探す。names が None なら見つかった RAW を全部対象にする。
 
     戻り値: (found {Folder: [RAW名]}, RAW が無い名前, 複数のフォルダにある名前)
     """
@@ -22,18 +23,19 @@ def find_raw(names):
         date_dirs = [Path(d) if Path(d).is_absolute() else settings.RAW_ROOT / str(d)
                      for d in settings.DATES]
     else:
-        date_dirs = sorted(p for p in settings.RAW_ROOT.iterdir() if p.is_dir())
+        date_dirs = sorted(p for p in _list_dir(settings.RAW_ROOT) if retry_io(p.is_dir))
 
     # RAW の入ったフォルダを集める（日付フォルダの直下に RAW があれば、日付フォルダごと1つ）
+    # RAW のフォルダが読めないと対象を決められないので、やり直しても読めなければここで止める
     folders = []
     for date_dir in date_dirs:
-        if not date_dir.is_dir():
+        if not retry_io(date_dir.is_dir):
             print(f"警告: 日付フォルダがありません: {date_dir}")
             continue
         if dataset.list_raw_files(date_dir):
             folders.append(Folder(date_dir.name, date_dir,
                                   settings.RECONSTRUCT_ROOT / date_dir.name))
-        for hour_dir in sorted(p for p in date_dir.iterdir() if p.is_dir()):
+        for hour_dir in sorted(p for p in _list_dir(date_dir) if retry_io(p.is_dir)):
             if dataset.list_raw_files(hour_dir):
                 folders.append(Folder(f"{date_dir.name}/{hour_dir.name}", hour_dir,
                                       settings.RECONSTRUCT_ROOT / date_dir.name / hour_dir.name))
@@ -42,6 +44,8 @@ def find_raw(names):
     for folder in folders:
         for raw in dataset.list_raw_files(folder.raw_dir):
             where.setdefault(raw.stem, []).append(folder)
+    if names is None:
+        names = list(where)
 
     found, not_found, duplicated = {}, [], []
     for name in names:
@@ -57,3 +61,8 @@ def find_raw(names):
     for folder, folder_names in found.items():
         print(f"  {folder.name}: {len(folder_names)} 件")
     return found, not_found, duplicated
+
+
+def _list_dir(root):
+    """root の中身を一覧する（Box Drive などの一時的なエラーはやり直す）。"""
+    return retry_io(lambda: list(root.iterdir()))

@@ -5,6 +5,7 @@
 
     camera.py           カメラ AG-HSV10M の仕様値（ビット深度・RAW構造・バンド構成）
     fileio.py           ファイルの読み書き（日本語パス対応）
+    fs_retry.py         Box Drive などの一時的な読み書きエラーのやり直し
     dataset.py          データセット走査、再構成フォルダ <-> RAW の対応付け
     saturation.py       飽和画素の検出
     white_board.py      白板補正（ArUcoで白板を見つけ、反射率に変換）
@@ -20,6 +21,7 @@ from . import (
     dataset,
     encode,
     fileio,
+    fs_retry,
     mask,
     saturation,
     white_board,
@@ -32,6 +34,7 @@ __all__ = [
     "dataset",
     "encode",
     "fileio",
+    "fs_retry",
     "mask",
     "saturation",
     "white_board",

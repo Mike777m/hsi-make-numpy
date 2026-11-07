@@ -12,3 +12,8 @@ dark/
 *.npy
 calibration.json
 names.txt
+
+# Iromiel Hyper SDK・キャリブレーションデータ（使用許諾により配布しないので git に入れない）
+HSmaskdata/
+Iromirl_Hyper_SDK/
+*.dll

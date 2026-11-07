@@ -1,4 +1,7 @@
+import numpy as np
+
 import settings
+from npy_dtype import npy_dtype
 
 
 def check_settings():
@@ -20,8 +23,16 @@ def check_settings():
     dates = ", ".join(map(str, settings.DATES)) or "すべて"
     print(f"RAW        : {settings.RAW_ROOT}  （日付: {dates}）")
     print(f"再構成結果 : {settings.RECONSTRUCT_ROOT}")
-    print(f"対象の名前 : {settings.NAMES_FILE}")
+    print(f"対象の名前 : {settings.NAMES_FILE or 'RAW_ROOT にある RAW 全部'}")
     print(f"出力       : {settings.OUTPUT_DIR}")
+    dtype = np.dtype(npy_dtype()).name
+    if dtype == "uint16":
+        print("npy の型   : uint16（再構成の値そのまま。計算するときは読み込んでから float32 に変換）")
+    else:
+        print(f"npy の型   : float32{'（補正するので uint16 にはしない）' if settings.NPY_UINT16 else ''}")
+    if settings.RECONSTRUCT_MISSING:
+        how = "SDK から直接 npy にする（PNG は作らない）" if settings.DIRECT_NPY else "PNG に再構成してから npy にする"
+        print(f"再構成     : 再構成結果が無いものは {how}")
     print(f"黒補正     : {settings.DARK_DIR if settings.BLACK_CORRECTION else 'なし'}")
     if settings.WHITE_CORRECTION:
         print(f"白板補正   : {settings.CALIBRATION_JSON}（白板の反射率 {settings.WHITE_BOARD_REFLECTANCE}）")

@@ -1,0 +1,114 @@
+# ============================================================================
+# batch_reconstruct.py（RAW → 再構成）の設定ファイル
+#
+# ・使う前に [paths] の mask と dll_dir を、自分の PC に合わせて書き換える
+#   （Iromiel Hyper SDK とキャリブレーションデータはこのリポジトリに入っていない）
+# ・パスは '...' (シングルクォート) で囲むと、Windows の \ をそのまま書けます
+# ・相対パスは、この config.toml があるフォルダ (automation) から見た位置です
+# ・make_numpy/settings.py の RECONSTRUCT_MISSING = True のとき、make_numpy/main.py が
+#   このファイルを読んで再構成する。そのとき使わない項目: [paths] input / output、
+#   [input] limit / overwrite（入力・出力は settings.py の RAW_ROOT / RECONSTRUCT_ROOT で決まる）
+# ・python automation/batch_reconstruct.py で、再構成だけを単体で実行することもできる
+#   （そのときは [paths] input / output と [input] limit を使う）
+# ============================================================================
+
+[paths]
+# 撮影済み RAW 画像が入っているフォルダ
+input = 'C:\hsdata\raw'
+
+# 結果の保存先フォルダ (無ければ自動で作成)
+#   <output>/<RAW名>/reconstruct/<RAW名>/band01_<RAW名>.png ...   再構成結果
+#   <output>/<RAW名>/log/log_<RAW名>.csv                          SDK の記録
+#   <output>/batch_log.csv                                        処理結果の一覧
+# SDK が付ける「再構成日時」の名前は、保存後に RAW 名へ付け替える
+output = 'C:\hsdata\out'
+
+# キャリブレーションデータ (_hsmask.csv)。撮影の解像度 (FHD / 4K)・絞りに合わせる
+#   既定は、SDK 付属の HSmaskdata をこのリポジトリ直下にコピーした場合の位置 (FHD・絞り F1.7)
+#   （HSmaskdata/ は .gitignore で git に入らないようにしてある）
+mask = '..\HSmaskdata\AG-HSV10M_K5NQA0013\420-700_29B\LUMIX G 42.5_F1.7_F1.7\FHD\_hsmask.csv'
+
+# SDK に渡す白板画像 / 遮光画像。使わないので []
+white = []
+dark = []
+
+# SDK の DLL フォルダ (HSProc.dll などがある Iromirl_Hyper_SDK\Library\release)。自分の PC の場所に書き換える
+dll_dir = 'C:\Iromiel hyper\Iromirl_Hyper_SDK\Library\release'
+
+
+[input]
+# 処理する拡張子
+extensions = ['raw', 'png']
+
+# 最初の N 枚だけ処理 (試運転用)。0 なら全部
+limit = 2
+
+# true にすると、処理済みのファイルもやり直す
+overwrite = false
+
+
+[save]
+png = true          # バンドごとの再構成画像 (.png)。HSI2RGB_main はこれを読む
+envi = false        # ENVI 形式 (.hdr & .raw、約160MB/枚)。npy 化には使わないので作らない
+light = false       # 8bit 軽量化画像
+log = true          # 記録情報 (log フォルダ)
+rec_log = false     # 復元処理のログ (log_reconst フォルダ)
+camera = false      # 撮影画像 (camera フォルダ) を残すか。SDK は保存を止められないので、false なら毎回削除
+
+
+[run]
+# 'oneshot'    = 単発撮影 (推奨)。1 つのファイルをちょうど 1 回だけ復元・保存する
+# 'continuous' = 連続撮影。1 回分を保存し終えたらすぐ止める
+mode = 'oneshot'
+
+# 1 枚あたりの待ち時間の上限 [秒]
+timeout = 300
+
+# 結果が書き終わったのを確認してから停止するまでの待ち時間 [秒] (連続撮影では 1 秒より短く)
+settle = 0.3
+
+# 2 回目以降の復元結果ができてしまった場合に削除する (保険)
+remove_extra = true
+
+# 単発撮影で、撮影待ち (start) にしてから合図 (oneShot) を送るまでの間 [秒]。
+#   間を置かずに送ると 1 割ほど無視されたため。0 にすると間を置かない (以前と同じ)
+trigger_delay = 0.5
+
+# 単発撮影の合図を SDK が取りこぼしたとき (callback も復元結果も出てこない) の対策
+#   retrigger 秒たっても反応が無ければ合図を送り直す (0 で送り直さない)。
+#   retrigger_max 回送り直しても反応が無ければ、timeout を待たずにその 1 枚を失敗とする
+retrigger = 20
+retrigger_max = 2
+
+# 1 枚が失敗したら SDK を初期化し直して、その 1 枚をもう一度だけ試す
+restart_on_fail = true
+
+# SDK に渡すパスの文字コード。日本語パスで失敗する場合は 'mbcs' を試す
+path_encoding = 'utf-8'
+
+
+# ----------------------------------------------------------------------------
+# 復元パラメータ (アプリの Setting_IromielHyper.json の reconst_param と同じ値)
+# ----------------------------------------------------------------------------
+[rec_param]
+max_iter = 500                # 反復回数 (10～10000)             アプリ: max_iter
+converge_threshold = 1e-6     # 仕様書では未使用 (ダミー)
+tau_1 = 5.0                   # 滑らかさ係数 (初期)               アプリ: tau_1
+tau_2 = 5.0                   # 滑らかさ係数 (変更後)             アプリ: tau_2
+tau_turning_point = 500       # 滑らかさ係数の切替タイミング       アプリ: ttp
+max_eigen = 1.0               # 相対収束パラメータ (1.0 固定)
+min_eigen = 1e-4              # 収束パラメータ (1e-4～1e-7)
+EM = 1.0                      # 初期値係数                        アプリ: em
+TV_denoise_threshold = 0.125  # TV denoise 収束パラメータ
+
+
+# ----------------------------------------------------------------------------
+# カメラパラメータ (アプリの camera_param と同じ値)
+# ----------------------------------------------------------------------------
+[cam_param]
+bitdepth = 12       # AG-HSV10M は 12bit
+gain = 0.0
+gamma = 1.0
+shutter = 0.033
+num_dark = 1
+framerate = 10.0

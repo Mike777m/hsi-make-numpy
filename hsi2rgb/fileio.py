@@ -11,7 +11,7 @@
 どちらの経路で読んでも飽和判定のしきい値を共通にできるようにするため。
 """
 
-import glob
+import fnmatch
 import json
 import os
 
@@ -24,6 +24,7 @@ from .camera import (
     RAW_WIDTH_FHD,
     SENSOR_BLACK_LEVEL,
 )
+from .fs_retry import retry_io
 
 
 def imread_unicode(file_path, flags=cv2.IMREAD_GRAYSCALE):
@@ -44,20 +45,31 @@ def imwrite_unicode(file_path, image):
     return True
 
 
-def load_band_images(folder_path):
-    """再構成フォルダの band*.png を読み、(B, H, W) float32 で返す。
+def load_band_images(folder_path, dtype=np.float32):
+    """再構成フォルダの band*.png を読み、(B, H, W) の dtype（既定は float32）で返す。
 
+    dtype=np.uint16 なら PNG の値をそのまま返す（make_numpy で uint16 の npy を作るとき）。
     保存形式は16bit PNG だが、値は 0〜65535 でも 0〜4095 でもなく、
     再構成ソフトが出す独自スケール（実測で13000超）。センサの12bitとは別物。
     ファイル名の band01..band29 の順（辞書順）がそのままバンド順になる。
+
+    フォルダの一覧には glob ではなく os.listdir を使う。glob は一覧の途中で読み取りエラーが
+    起きても黙ってそこまでの分を返すので、Box Drive 上ではバンドが欠けたまま進むおそれがある。
+    os.listdir は全部読めるかエラーかのどちらかになる（読むファイルと順番は glob と同じ）。
     """
-    file_list = sorted(glob.glob(os.path.join(folder_path, "band*.png")))
+    try:
+        names = retry_io(os.listdir, folder_path)
+    except (FileNotFoundError, NotADirectoryError):
+        names = []
+    file_list = sorted(
+        os.path.join(folder_path, name) for name in names if fnmatch.fnmatch(name, "band*.png")
+    )
     if not file_list:
         raise FileNotFoundError(f"バンドPNGが見つかりません: {folder_path}")
 
     images = []
     for file_path in file_list:
-        img = imread_unicode(file_path, cv2.IMREAD_UNCHANGED)
+        img = retry_io(imread_unicode, file_path, cv2.IMREAD_UNCHANGED)
         if img is None:
             raise ValueError(f"画像を読み込めません: {file_path}")
         if img.ndim != 2:
@@ -66,7 +78,7 @@ def load_band_images(folder_path):
             raise TypeError(f"16bit PNGが必要です (got {img.dtype}): {file_path}")
         images.append(img)
 
-    return np.array(images, dtype=np.float32)
+    return np.array(images, dtype=dtype)
 
 
 def load_compressed_measurement(file_path):
