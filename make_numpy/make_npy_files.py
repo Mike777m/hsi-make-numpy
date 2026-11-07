@@ -12,8 +12,8 @@ class ReadTimeout(Exception):
     """再構成バンドの読み込みが READ_TIMEOUT_SEC 秒たっても終わらない。"""
 
 
-def make_npy_files(targets, dark):
-    """targets [(Scene, roi)] を1枚ずつ npy にする。
+def make_npy_files(targets, dark, log):
+    """targets [(Scene, roi)] を1枚ずつ npy にする。1 枚ごとの結果と秒数は log（run_log.RunLog）に記録する。
 
     戻り値: (作った RAW 名, 失敗した RAW 名と理由, 途中で止めた理由 or None)
 
@@ -26,18 +26,25 @@ def make_npy_files(targets, dark):
         print(f"[{i}/{len(targets)}] {name}  ({scene.reconstruct_dir})")
         for attempt in range(settings.RETRY_COUNT + 1):
             try:
+                t0 = time.monotonic()
                 array = _make_bands_with_timeout(scene, roi, dark)
+                t1 = time.monotonic()
                 path = save_npy(array, name)
-                print(f"  {path} 保存完了  shape={array.shape} {array.dtype}")
+                t2 = time.monotonic()
+                print(f"  {path} 保存完了  shape={array.shape} {array.dtype}  （読み込み {t1 - t0:.1f} 秒 / 保存 {t2 - t1:.1f} 秒）")
                 made.append(name)
+                log.record(name, "png", "ok", read_sec=t1 - t0, save_sec=t2 - t1,
+                           message=f"やり直し {attempt} 回" if attempt else "")
                 break
             except ReadTimeout as e:  # やり直しても待たされるだけなので、ここで止める
                 print(f"  止めます: {e}")
                 failed.append(f"{name}  {e}")
+                log.record(name, "png", "timeout", message=str(e))
                 return made, failed, str(e)
             except white_board.WhiteBoardNotUsable as e:  # やり直しても同じなので飛ばす
                 print(f"  スキップ: {e}")
                 failed.append(f"{name}  {e}")
+                log.record(name, "png", "skip", message=str(e))
                 break
             except Exception as e:
                 if attempt < settings.RETRY_COUNT:
@@ -46,6 +53,7 @@ def make_npy_files(targets, dark):
                 else:
                     print(f"  スキップします: {type(e).__name__}: {e}")
                     failed.append(f"{name}  {type(e).__name__}: {e}")
+                    log.record(name, "png", "error", message=f"{type(e).__name__}: {e}")
     return made, failed, None
 
 

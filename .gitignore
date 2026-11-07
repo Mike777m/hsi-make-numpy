@@ -6,6 +6,7 @@ __pycache__/
 raw_data/
 input_folder/
 output_npy/
+logs/
 dark/
 *.RAW
 *.raw

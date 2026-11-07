@@ -23,6 +23,7 @@ from make_npy_files import make_npy_files
 from npy_dtype import npy_mb
 from reconstruct_missing import reconstruct_missing
 from reconstruct_to_npy import reconstruct_to_npy
+from run_log import RunLog
 from select_targets import select_targets
 
 NO_SPACE_ADVICE = "npy 化が終わった日付の再構成結果を消して容量を空け、もう一度実行してください。"
@@ -30,6 +31,20 @@ NO_SPACE_ADVICE = "npy 化が終わった日付の再構成結果を消して容
 
 def main():
     check_settings()
+    log = RunLog()  # 1 枚ごとの秒数と、何枚を何時間で作ったかを LOG_DIR に記録する
+    note = ""
+    try:
+        code, note = make_all(log)
+        return code
+    except BaseException as e:  # Ctrl+C などで止めたときも、そこまでの記録を残す
+        note = f"途中で止まりました（{type(e).__name__}）"
+        raise
+    finally:
+        log.finish(note)
+
+
+def make_all(log):
+    """日付ごとに npy を作り、結果を表示する。戻り値: (終了コード, 途中で止めた理由 or "")"""
     names = load_names(settings.NAMES_FILE) if settings.NAMES_FILE else None  # None: RAW 全部
     calibration = {}
     if settings.WHITE_CORRECTION:
@@ -49,7 +64,9 @@ def main():
     stopped_at = None
     for n, (date, date_found) in enumerate(by_date.items(), start=1):
         print(f"\n===== {date}（{n}/{len(by_date)}）=====")
+        log.begin_date(date)
         picked = select_targets(date_found, calibration)
+        log.count_skipped(len(picked["existing"]), len(picked["unreadable"]))
         missing_names = {name for folder_names in picked["missing"].values() for name in folder_names}
         n_missing = len(missing_names)
         direct = settings.RECONSTRUCT_MISSING and settings.DIRECT_NPY  # 再構成結果が無いものは SDK から直接 npy
@@ -70,16 +87,17 @@ def main():
 
         if picked["targets"]:
             print(f"--- npy 作成（再構成結果の PNG から）: {len(picked['targets'])} 件 ---")
-        date_made, date_failed, stalled = make_npy_files(picked["targets"], dark)
+        date_made, date_failed, stalled = make_npy_files(picked["targets"], dark, log)
         if direct and n_missing and not stalled:
             print(f"--- npy 作成（SDK から直接）: {n_missing} 件 ---")
-            direct_result = reconstruct_to_npy(picked["missing"], calibration, dark)
+            direct_result = reconstruct_to_npy(picked["missing"], calibration, dark, log)
             date_made += direct_result["made"]
             date_failed += direct_result["failed"]
             no_roi += direct_result["no_roi"]
             picked["missing"] = {}  # 作れなかったものは「失敗」に入っているので、「再構成結果が無い名前」には入れない
         print(f"{date}: 作成 {len(date_made)} 件 / 既存スキップ {len(picked['existing'])} 件 / "
               f"失敗 {len(date_failed)} 件")
+        log.end_date("Box Drive の読み込みが終わらず途中で止めた" if stalled else "")
 
         # この日付で再構成して npy にできたものだけ、再構成結果を消す（npy 化に失敗したものは残す）
         if settings.DELETE_RECONSTRUCT_AFTER_NPY:
@@ -124,7 +142,7 @@ def main():
         print(f"--- {headline} ---")
         print(f"  {advice}")
         print("  npy 化が終わった RAW は飛ばして、続きから処理します。")
-    return 1 if failed or unreadable or stopped_at else 0
+    return (1 if failed or unreadable or stopped_at else 0), (stopped_at[0] if stopped_at else "")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ DARK_DIR = PROJECT_ROOT / "dark"                      # 黒補正のダーク（
 OUTPUT_DIR = PROJECT_ROOT / "output_npy"        # <OUTPUT_DIR>/<RAW名>.npy
 NPY_UINT16 = True             # 補正なし（下の2つが False）なら npy を uint16 で保存する。値は再構成の値そのまま（劣化なし）で 1 枚 約160MB。
                               # False なら float32（約320MB、値は同じ）。補正するときは常に float32
+LOG_DIR = PROJECT_ROOT / "logs"   # 実行の記録（npy_log.csv: 1 枚ごとの秒数、run_summary.csv: 何枚を何時間で作ったか）
 
 # --- 補正（False / False なら再構成の値そのまま）---
 BLACK_CORRECTION = False

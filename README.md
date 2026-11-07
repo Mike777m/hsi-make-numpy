@@ -50,6 +50,15 @@ python make_numpy/main.py
 `output_npy/<RAW名>.npy` ができる。最後に、作れなかった名前が理由ごとに表示される。
 もう一度実行すると、npy が既にあるものは飛ばす。
 
+実行するたびに `logs/` の 2 つの CSV に記録を追記し、最後に画面にもまとめを出す（途中で止めたときも）。
+
+| ファイル | 中身 |
+|---|---|
+| `logs/npy_log.csv` | 1 枚ごと：RAW 名・PNG から / SDK から・成否・読み込み / 復元 / 保存の秒数・前の 1 枚からの間隔（`interval_sec` = 実際に 1 枚にかかった時間） |
+| `logs/run_summary.csv` | 日付ごとと実行全体：何枚を何時間で作ったか・1 枚あたりの秒数・1 時間あたりの枚数・失敗と既存スキップの数 |
+
+列の意味は `make_numpy/説明.md` の「実行の記録」。
+
 Box Drive などのクラウド同期フォルダの中で動かすと、フォルダが一時的に読めないことがある（`WinError 1237`）。
 そのときは数回やり直し、それでも読めない名前はその回は飛ばして、最後に「一時的なエラーで読めず、飛ばした名前」として表示する。
 同期が落ち着いてからもう一度実行すれば、続きから処理する（詳しくは `make_numpy/説明.md`）。
@@ -85,6 +94,7 @@ spectrum = cube[:, 700, 900]                 # 画素 (x=900, y=700) のスペ�
 | `DATES` | 探す日付。例 `["10082026", "10092026"]`。空 `[]` なら全部 |
 | `NAMES_FILE` | npy にする RAW 名のファイル |
 | `OUTPUT_DIR` | npy の保存先 |
+| `LOG_DIR` | 実行の記録の保存先（既定 `logs/`） |
 | `NPY_UINT16` | 補正なしなら npy を `uint16` で保存する（既定 `True`）。`False` なら `float32` |
 | `BLACK_CORRECTION` / `WHITE_CORRECTION` | 補正（下の表） |
 | `OVERWRITE` | 既にある npy も作り直すか |
@@ -143,7 +153,7 @@ spectrum = cube[:, 700, 900]                 # 画素 (x=900, y=700) のスペ�
 
 * 日付ごとに、npy の空き容量（`DIRECT_NPY = False` なら再構成結果の分も）を確かめ、足りなければその日付を始めずに止まる。
 * `DIRECT_NPY = True` では、SDK が書く撮影画像の PNG だけを `RECONSTRUCT_ROOT/_direct_npy_tmp/` に一時的に置いて 1 枚ごとに消す。
-  1 枚ごとの結果は `RECONSTRUCT_ROOT/direct_npy_log.csv` に残る。
+  1 枚ごとの結果と秒数は `logs/npy_log.csv` に残る。
 * `DELETE_RECONSTRUCT_AFTER_NPY = True` にすると、`DIRECT_NPY = False` で再構成した結果を npy にしたあと消す。
 * 再構成だけを単体で実行することもできる（`config.toml` の `input` / `output` を書いて `python automation/batch_reconstruct.py`）。
 
